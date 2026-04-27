@@ -16,6 +16,8 @@ function SlidePreview({
   frame: StoryFrame
   scale?: number
 }) {
+  const overlay = frame.overlayColor ?? (frame.imageUrl ? 'rgba(0,0,0,0.42)' : undefined)
+
   return (
     <div
       className="absolute inset-0 overflow-hidden"
@@ -24,31 +26,92 @@ function SlidePreview({
           ? `url(${frame.imageUrl}) center/cover`
           : frame.backgroundColor,
       }}>
-      {frame.imageUrl && (
-        <div className="absolute inset-0" style={{ backgroundColor: 'rgba(0,0,0,0.38)' }} />
+
+      {overlay && (
+        <div className="absolute inset-0" style={{ backgroundColor: overlay }} />
       )}
-      {frame.textElements.map((el) => (
-        <div
-          key={el.id}
-          className="absolute pointer-events-none"
-          style={{
-            left: `${el.x}%`,
-            top: `${el.y}%`,
-            transform: `translate(-50%,-50%) rotate(${el.rotation}deg)`,
-            fontFamily: el.fontFamily,
-            fontSize: `${el.fontSize * scale}px`,
-            color: el.color,
-            fontWeight: el.bold ? 'bold' : 400,
-            fontStyle: el.italic ? 'italic' : 'normal',
-            textShadow: '0 2px 10px rgba(0,0,0,0.5)',
-            whiteSpace: 'pre-wrap',
-            textAlign: 'center',
-            maxWidth: '82%',
-            lineHeight: 1.15,
-          }}>
-          {el.content}
-        </div>
-      ))}
+
+      {frame.textElements.map((el) => {
+        const align = el.align ?? 'center'
+        const isLeft = align === 'left'
+        const isRight = align === 'right'
+
+        const translateX = isLeft ? '0%' : isRight ? '-100%' : '-50%'
+        const paddingH = Math.round(10 * scale)
+        const paddingV = Math.round(6 * scale)
+
+        return (
+          <div
+            key={el.id}
+            className="absolute pointer-events-none"
+            style={{
+              left: `${el.x}%`,
+              top: `${el.y}%`,
+              transform: `translate(${translateX}, -50%) rotate(${el.rotation}deg)`,
+              maxWidth: `${el.maxWidth ?? 85}%`,
+              opacity: el.opacity ?? 1,
+            }}>
+
+            {/* border-left accent */}
+            {el.borderLeft && (
+              <div
+                className="absolute"
+                style={{
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: Math.round(3 * scale),
+                  backgroundColor: el.borderLeftColor ?? '#ffffff',
+                  borderRadius: 2,
+                }}
+              />
+            )}
+
+            {/* background box */}
+            <div
+              style={{
+                paddingLeft: el.borderLeft ? Math.round(10 * scale) : (el.backgroundBox ? paddingH : 0),
+                paddingRight: el.backgroundBox ? paddingH : 0,
+                paddingTop: el.backgroundBox ? paddingV : 0,
+                paddingBottom: el.backgroundBox ? paddingV : 0,
+                backgroundColor: el.backgroundBox ?? 'transparent',
+                display: 'inline-block',
+                borderRadius: Math.round(4 * scale),
+              }}>
+              <div
+                style={{
+                  fontFamily: el.fontFamily,
+                  fontSize: `${el.fontSize * scale}px`,
+                  color: el.color,
+                  fontWeight: el.bold ? 'bold' : 400,
+                  fontStyle: el.italic ? 'italic' : 'normal',
+                  textShadow: el.backgroundBox ? 'none' : '0 2px 10px rgba(0,0,0,0.5)',
+                  whiteSpace: 'pre-wrap',
+                  textAlign: align,
+                  lineHeight: el.lineHeight ?? 1.2,
+                  letterSpacing: el.letterSpacing ? `${el.letterSpacing * scale}px` : undefined,
+                  textTransform: el.uppercase ? 'uppercase' : undefined,
+                }}>
+                {el.content}
+              </div>
+            </div>
+
+            {/* decorative line */}
+            {el.decorLine && (
+              <div
+                style={{
+                  height: Math.round(2 * scale),
+                  backgroundColor: el.decorLineColor ?? el.color,
+                  marginTop: Math.round(5 * scale),
+                  width: '100%',
+                  borderRadius: 2,
+                  opacity: 0.75,
+                }}
+              />
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

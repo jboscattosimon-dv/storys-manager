@@ -10,6 +10,7 @@ export interface StoryFrame {
   id: string
   imageUrl?: string
   backgroundColor: string
+  overlayColor?: string
   textElements: TextElement[]
   stickers: Sticker[]
   createdAt: string
@@ -26,6 +27,18 @@ export interface TextElement {
   rotation: number
   bold: boolean
   italic: boolean
+  // layout extras
+  align?: 'left' | 'center' | 'right'
+  backgroundBox?: string
+  maxWidth?: number
+  uppercase?: boolean
+  decorLine?: boolean
+  decorLineColor?: string
+  borderLeft?: boolean
+  borderLeftColor?: string
+  lineHeight?: number
+  letterSpacing?: number
+  opacity?: number
 }
 
 export interface Sticker {
