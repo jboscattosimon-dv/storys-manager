@@ -2,13 +2,38 @@ import type { StoryFrame, TextElement } from '../types'
 
 export type StoryStyle = 'poster' | 'deco'
 
-// ─── TEXT PARSING ────────────────────────────────────────────────
-
+// ── SEGMENT TYPES ────────────────────────────────────────────────
 interface Segment {
   content: string
   role: 'headline' | 'sub' | 'body' | 'cta' | 'list'
 }
 
+const uid = () => crypto.randomUUID()
+
+// ── STORY BLOCK PARSER ────────────────────────────────────────────
+// Splits "STORY 1\n...\nSTORY 2\n..." or "STORYS 1\n..." into separate blocks
+export function splitStoryBlocks(raw: string): string[] {
+  const marker = /^(STORY|STORYS|STORIES?)\s*\d+\s*$/im
+  const lines = raw.split('\n')
+  const hasMarkers = lines.some(l => marker.test(l.trim()))
+  if (!hasMarkers) return [raw.trim()].filter(Boolean)
+
+  const blocks: string[] = []
+  let current: string[] = []
+
+  for (const line of lines) {
+    if (marker.test(line.trim())) {
+      if (current.length > 0) blocks.push(current.join('\n').trim())
+      current = []
+    } else {
+      current.push(line)
+    }
+  }
+  if (current.length > 0) blocks.push(current.join('\n').trim())
+  return blocks.filter(b => b.length > 0)
+}
+
+// ── SEGMENT PARSER ───────────────────────────────────────────────
 function parseSegments(raw: string): Segment[] {
   return raw
     .split('\n')
@@ -16,181 +41,399 @@ function parseSegments(raw: string): Segment[] {
     .filter(l => l.length > 0)
     .map((line): Segment => {
       const words = line.split(/\s+/).length
-      const isList = /^[→✓\-•✔]/.test(line) || line.startsWith('- ')
-      const isCTA  = /link|bio|acesse|clique|saiba|compre|garanta|→$/i.test(line)
-      if (isList)              return { content: line, role: 'list' }
-      if (isCTA)               return { content: line, role: 'cta' }
-      if (words <= 4)          return { content: line, role: 'headline' }
-      if (words <= 10)         return { content: line, role: 'sub' }
-      return                          { content: line, role: 'body' }
+      const isCheck = /^[✅☑✓✔]/.test(line)
+      const isArrow = /^[→\-•]/.test(line) || /^\d+\./.test(line)
+      const isList = isCheck || isArrow
+      const isCTA = /\blink\b|\bbio\b|acesse|clique|saiba|compre|garanta|@\w/i.test(line) && !isList
+      if (isList) return { content: line, role: 'list' }
+      if (isCTA)  return { content: line, role: 'cta' }
+      if (words <= 3) return { content: line, role: 'headline' }
+      if (words <= 9) return { content: line, role: 'sub' }
+      return         { content: line, role: 'body' }
     })
 }
 
-function groupIntoSlides(segs: Segment[]): Segment[][] {
-  const slides: Segment[][] = []
-  let current: Segment[] = []
-  let weight = 0
-
-  for (const s of segs) {
-    const w = s.role === 'body' ? 3 : s.role === 'list' ? 1.5 : 2
-    if (weight + w > 5 && current.length > 0) {
-      slides.push(current)
-      current = []
-      weight = 0
-    }
-    current.push(s)
-    weight += w
-  }
-  if (current.length > 0) slides.push(current)
-  return slides.length ? slides : [[{ content: 'Seu texto aqui', role: 'headline' }]]
-}
-
-// ─── HELPERS ─────────────────────────────────────────────────────
-
-const id = () => crypto.randomUUID()
-
-function frame(
-  bg: string,
-  elements: TextElement[],
-  imageUrl?: string,
-  overlay = 'rgba(0,0,0,0.42)'
-): StoryFrame {
+// ── FRAME FACTORY ────────────────────────────────────────────────
+function mkFrame(bg: string, elements: TextElement[], imageUrl?: string, overlay?: string): StoryFrame {
   return {
-    id: id(),
+    id: uid(),
     backgroundColor: bg,
     imageUrl,
-    overlayColor: imageUrl ? overlay : undefined,
+    overlayColor: overlay,
     textElements: elements,
     stickers: [],
     createdAt: new Date().toISOString(),
   }
 }
 
-// ─── POSTER PATTERNS ─────────────────────────────────────────────
-// Inspired by: dark overlay + strong typography + colored boxes
-
-const POSTER_BGS = [
-  'linear-gradient(160deg,#1a0a0a 0%,#3b0f0f 100%)',
-  'linear-gradient(160deg,#0a0a1a 0%,#0f0f3b 100%)',
-  'linear-gradient(160deg,#0a1a0a 0%,#0f3b1a 100%)',
-  'linear-gradient(160deg,#1a1a0a 0%,#3b3b0f 100%)',
-  'linear-gradient(160deg,#0d0d0d 0%,#1a1a1a 100%)',
+// ── PALETTES ─────────────────────────────────────────────────────
+const DARK_BGS = [
+  'linear-gradient(160deg,#1a0a0a,#3b0f0f)',
+  'linear-gradient(160deg,#0a0a1a,#0f0f3b)',
+  'linear-gradient(160deg,#0d0d0d,#1a1a1a)',
+  'linear-gradient(160deg,#0f0c29,#302b63)',
+  'linear-gradient(160deg,#0a1a0a,#0f3b1a)',
 ]
 
-const POSTER_BOX_COLORS = [
-  'rgba(90,26,26,0.92)',
-  'rgba(26,26,90,0.92)',
-  'rgba(58,58,20,0.88)',
-  'rgba(20,58,30,0.88)',
-  'rgba(15,15,15,0.90)',
+const BOX_COLORS = [
+  'rgba(80,20,20,0.90)',
+  'rgba(30,30,80,0.90)',
+  'rgba(20,60,30,0.90)',
+  'rgba(60,50,10,0.90)',
+  'rgba(50,30,60,0.90)',
 ]
 
-/** Pattern: small label in box + HUGE word + underline (image 1, 4) */
-function posterImpact(segs: Segment[], idx: number, img?: string): StoryFrame {
-  const boxColor = POSTER_BOX_COLORS[idx % POSTER_BOX_COLORS.length]
-  const bg = POSTER_BGS[idx % POSTER_BGS.length]
-  const headline = segs.find(s => s.role === 'headline') ?? segs[0]
-  const sub      = segs.find(s => s.role === 'sub' || s.role === 'body')
-  const cta      = segs.find(s => s.role === 'cta')
+const OLIVE_BOXES = [
+  'rgba(85,90,60,0.92)',
+  'rgba(60,50,30,0.92)',
+  'rgba(40,60,70,0.92)',
+]
+
+// ────────────────────────────────────────────────────────────────
+// T1 — BoxTop + BigWord
+// Ref img 1: "Construa sua própria" [dark box] + OPORTUNIDADE [huge]
+// When: phrase/subtitle + one short headline word
+// ────────────────────────────────────────────────────────────────
+function t1_boxTopBigWord(segs: Segment[], idx: number, img?: string): StoryFrame {
+  const bg = img ? '#000000' : DARK_BGS[idx % DARK_BGS.length]
+  const boxColor = BOX_COLORS[idx % BOX_COLORS.length]
+
+  const headline = segs.find(s => s.role === 'headline') ?? segs[segs.length - 1]
+  const phrase = segs.find(s => s !== headline) ?? segs[0]
+
+  const bigFont = headline.content.length > 12 ? 68 : headline.content.length > 8 ? 82 : 96
+
+  const els: TextElement[] = [
+    {
+      id: uid(), content: phrase.content,
+      x: 50, y: 24,
+      fontSize: 28, fontFamily: 'Poppins', color: '#ffffff',
+      rotation: 0, bold: false, italic: false,
+      align: 'center', backgroundBox: boxColor, maxWidth: 82,
+    },
+    {
+      id: uid(), content: headline.content,
+      x: 50, y: 44,
+      fontSize: bigFont, fontFamily: 'Paytone One', color: '#8B1A1A',
+      rotation: 0, bold: true, italic: false,
+      align: 'center', uppercase: true, maxWidth: 90,
+    },
+  ]
+
+  return mkFrame(bg, els, img, img ? 'rgba(0,0,0,0.45)' : undefined)
+}
+
+// ────────────────────────────────────────────────────────────────
+// T2 — GiantLetter + WordList
+// Ref img 2: "RE" [huge left] + fazer / construir / inventar... [right column]
+// When: first segment ≤ 3 chars + 3+ remaining single-word items
+// ────────────────────────────────────────────────────────────────
+function t2_giantLetterList(segs: Segment[], idx: number, img?: string): StoryFrame {
+  const isDark = !!img || idx % 2 === 0
+  const bg = isDark ? '#f0ede8' : '#0d0d0d'
+  const bigColor = isDark ? '#111111' : '#f0f0f0'
+  const listColor = isDark ? '#1a1a1a' : '#e8e8e8'
+
+  const prefix = segs[0]
+  const items = segs.slice(1)
+
+  const els: TextElement[] = [
+    {
+      id: uid(), content: prefix.content,
+      x: 11, y: 34,
+      fontSize: 155, fontFamily: 'Paytone One', color: bigColor,
+      rotation: 0, bold: true, italic: false,
+      align: 'left', maxWidth: 35,
+    },
+    ...items.slice(0, 6).map((s, i): TextElement => ({
+      id: uid(), content: s.content,
+      x: 48, y: 18 + i * 8.5,
+      fontSize: 28, fontFamily: 'Poiret One', color: listColor,
+      rotation: 0, bold: false, italic: false,
+      align: 'left', maxWidth: 48,
+    })),
+  ]
+
+  return mkFrame(bg, els, img, img ? 'rgba(0,0,0,0.12)' : undefined)
+}
+
+// ────────────────────────────────────────────────────────────────
+// T3 — InlineHighlight
+// Ref img 3: "O seu sucesso deve ser seu [COMPROMISSO] diário!"
+// When: one sentence with one key word highlighted in a colored box
+// ────────────────────────────────────────────────────────────────
+function t3_inlineHighlight(segs: Segment[], idx: number, img?: string): StoryFrame {
+  const bg = img ? '#000000' : DARK_BGS[idx % DARK_BGS.length]
+  const boxColor = BOX_COLORS[idx % BOX_COLORS.length]
+
+  const mainSeg = segs.find(s => s.role === 'body' || s.role === 'sub') ?? segs[0]
+  const keywordSeg = segs.find(s => s.role === 'headline' && s !== mainSeg)
 
   const els: TextElement[] = []
+
+  if (keywordSeg) {
+    els.push({
+      id: uid(), content: mainSeg.content,
+      x: 50, y: 46,
+      fontSize: 24, fontFamily: 'Poppins', color: '#ffffff',
+      rotation: 0, bold: false, italic: false,
+      align: 'center', maxWidth: 80, lineHeight: 1.4,
+    })
+    els.push({
+      id: uid(), content: keywordSeg.content,
+      x: 50, y: 60,
+      fontSize: 28, fontFamily: 'Poppins', color: '#ffffff',
+      rotation: 0, bold: true, italic: false,
+      align: 'center', backgroundBox: boxColor, maxWidth: 64,
+    })
+  } else {
+    // Auto-highlight the longest word in the sentence
+    const words = mainSeg.content.split(/\s+/)
+    const hi = [...words].sort((a, b) => b.length - a.length)[0]
+    const hiIdx = words.indexOf(hi)
+    const before = words.slice(0, hiIdx).join(' ')
+    const after  = words.slice(hiIdx + 1).join(' ')
+
+    if (before) els.push({
+      id: uid(), content: before,
+      x: 50, y: 42, fontSize: 24, fontFamily: 'Poppins', color: '#ffffff',
+      rotation: 0, bold: false, italic: false, align: 'center', maxWidth: 80,
+    })
+    els.push({
+      id: uid(), content: hi,
+      x: 50, y: before ? 54 : 48,
+      fontSize: 28, fontFamily: 'Poppins', color: '#ffffff',
+      rotation: 0, bold: true, italic: false,
+      align: 'center', backgroundBox: boxColor,
+    })
+    if (after) els.push({
+      id: uid(), content: after,
+      x: 50, y: before ? 66 : 60, fontSize: 24, fontFamily: 'Poppins', color: '#ffffff',
+      rotation: 0, bold: false, italic: false, align: 'center', maxWidth: 80,
+    })
+  }
+
+  return mkFrame(bg, els, img, img ? 'rgba(0,0,0,0.40)' : undefined)
+}
+
+// ────────────────────────────────────────────────────────────────
+// T4 — BottomTitleLine
+// Ref img 4: photo + CONSTÂNCIA [big center bottom] + line + subtitle
+// When: one-word headline + subtitle phrase (bottom zone)
+// ────────────────────────────────────────────────────────────────
+function t4_bottomTitleLine(segs: Segment[], idx: number, img?: string): StoryFrame {
+  const bg = img ? '#000000' : DARK_BGS[idx % DARK_BGS.length]
+
+  const headline = segs.find(s => s.role === 'headline') ?? segs[0]
+  const sub = segs.find(s => s !== headline)
+
+  const bigFont = headline.content.length > 12 ? 58 : headline.content.length > 8 ? 70 : 84
+
+  const els: TextElement[] = [
+    {
+      id: uid(), content: headline.content,
+      x: 50, y: 72,
+      fontSize: bigFont, fontFamily: 'Paytone One', color: '#ffffff',
+      rotation: 0, bold: false, italic: false,
+      align: 'center', uppercase: true,
+      decorLine: true, decorLineColor: 'rgba(255,255,255,0.65)',
+      maxWidth: 88,
+    },
+  ]
 
   if (sub) {
     els.push({
-      id: id(), content: sub.content,
-      x: 50, y: 26,
-      fontSize: 28, fontFamily: 'Poppins', color: '#ffffff',
+      id: uid(), content: sub.content,
+      x: 50, y: 86,
+      fontSize: 20, fontFamily: 'Poppins', color: 'rgba(255,255,255,0.88)',
       rotation: 0, bold: false, italic: false,
-      align: 'center', backgroundBox: boxColor,
-      maxWidth: 80,
+      align: 'center', maxWidth: 80, lineHeight: 1.35,
     })
   }
 
-  els.push({
-    id: id(), content: headline.content,
-    x: 50, y: sub ? 52 : 46,
-    fontSize: headline.content.length > 10 ? 68 : 88,
-    fontFamily: 'Paytone One', color: '#ffffff',
-    rotation: 0, bold: false, italic: false,
-    align: 'center', uppercase: true,
-    decorLine: true, decorLineColor: '#ffffff',
-    maxWidth: 88,
-  })
+  return mkFrame(bg, els, img, img ? 'rgba(0,0,0,0.50)' : undefined)
+}
+
+// ────────────────────────────────────────────────────────────────
+// T5 — BoxHeadline + ArrowList
+// Ref img 5: olive box headline center + cream box arrow list below
+// When: headline/body + 2+ list items
+// ────────────────────────────────────────────────────────────────
+function t5_boxHeadlineArrowList(segs: Segment[], idx: number, img?: string): StoryFrame {
+  const bg = img ? '#1a1a12' : 'linear-gradient(160deg,#1e1e16,#2a2a1a)'
+  const headlineBox = OLIVE_BOXES[idx % OLIVE_BOXES.length]
+  const listBox = 'rgba(245,242,235,0.93)'
+
+  const phrase = segs.find(s => s.role === 'body' || s.role === 'sub') ?? segs[0]
+  const headline = segs.find(s => s.role === 'headline')
+  const items = segs.filter(s => s.role === 'list')
+  const cta = segs.find(s => s.role === 'cta')
+
+  const headlineText = [phrase?.content, headline?.content].filter(Boolean).join('\n')
+
+  const listText = items
+    .map(s => s.content.startsWith('→') ? s.content : `→ ${s.content}`)
+    .join('\n')
+
+  const els: TextElement[] = [
+    {
+      id: uid(), content: headlineText,
+      x: 50, y: 36,
+      fontSize: 22, fontFamily: 'Poppins', color: '#ffffff',
+      rotation: 0, bold: false, italic: false,
+      align: 'center', backgroundBox: headlineBox, maxWidth: 80, lineHeight: 1.45,
+    },
+  ]
+
+  if (listText) {
+    els.push({
+      id: uid(), content: listText,
+      x: 12, y: 62,
+      fontSize: 19, fontFamily: 'Poppins', color: '#1a1a0a',
+      rotation: 0, bold: false, italic: false,
+      align: 'left', backgroundBox: listBox, maxWidth: 76, lineHeight: 1.6,
+    })
+  }
 
   if (cta) {
     els.push({
-      id: id(), content: cta.content,
-      x: 50, y: 80,
-      fontSize: 22, fontFamily: 'Inter', color: 'rgba(255,255,255,0.8)',
-      rotation: 0, bold: false, italic: false,
-      align: 'center',
+      id: uid(), content: cta.content,
+      x: 50, y: 88,
+      fontSize: 14, fontFamily: 'Poppins', color: 'rgba(255,255,255,0.45)',
+      rotation: 0, bold: false, italic: false, align: 'center',
     })
   }
 
-  return frame(bg, els, img, 'rgba(0,0,0,0.50)')
+  return mkFrame(bg, els, img, img ? 'rgba(0,0,0,0.40)' : undefined)
 }
 
-/** Pattern: bottom zone — big word + line + subtitle (image 4) */
-function posterBottom(segs: Segment[], idx: number, img?: string): StoryFrame {
-  const bg = POSTER_BGS[idx % POSTER_BGS.length]
-  const headline = segs.find(s => s.role === 'headline') ?? segs[0]
-  const rest = segs.filter(s => s !== headline)
+// ────────────────────────────────────────────────────────────────
+// T6 — CardQuoteLeft
+// Ref img 6: semi-transparent card left-center + vertical line + quote
+// When: single long quote / paragraph
+// ────────────────────────────────────────────────────────────────
+function t6_cardQuoteLeft(segs: Segment[], _idx: number, img?: string): StoryFrame {
+  const bg = img ? '#1a1209' : 'linear-gradient(160deg,#c8a97e,#8B6914)'
+  const cardColor = 'rgba(180,140,60,0.78)'
 
-  const els: TextElement[] = []
-
-  els.push({
-    id: id(), content: headline.content,
-    x: 10, y: 68,
-    fontSize: headline.content.length > 12 ? 56 : 72,
-    fontFamily: 'Paytone One', color: '#ffffff',
-    rotation: 0, bold: false, italic: false,
-    align: 'left', uppercase: true,
-    decorLine: true, decorLineColor: 'rgba(255,255,255,0.6)',
-    maxWidth: 86,
-  })
-
-  rest.forEach((s, i) => {
-    els.push({
-      id: id(), content: s.content,
-      x: 10, y: 80 + i * 8,
-      fontSize: 22, fontFamily: 'Inter', color: 'rgba(255,255,255,0.85)',
-      rotation: 0, bold: false, italic: false,
-      align: 'left', maxWidth: 82,
-    })
-  })
-
-  return frame(bg, els, img, 'rgba(0,0,0,0.45)')
-}
-
-/** Pattern: list items left-aligned with box + arrows (image 5, 8) */
-function posterList(segs: Segment[], idx: number, img?: string): StoryFrame {
-  const boxColor = POSTER_BOX_COLORS[idx % POSTER_BOX_COLORS.length]
-  const bg = POSTER_BGS[idx % POSTER_BGS.length]
-  const headline = segs.find(s => s.role === 'headline' || s.role === 'sub')
-  const items = segs.filter(s => s.role === 'list' || (s !== headline && s.role !== 'cta'))
+  const mainSeg = segs.find(s => s.role === 'body' || s.role === 'sub') ?? segs[0]
   const cta = segs.find(s => s.role === 'cta')
 
-  const els: TextElement[] = []
+  const els: TextElement[] = [
+    {
+      id: uid(), content: mainSeg.content,
+      x: 10, y: 45,
+      fontSize: 22, fontFamily: 'Poppins', color: '#ffffff',
+      rotation: 0, bold: false, italic: false,
+      align: 'left', backgroundBox: cardColor,
+      borderLeft: true, borderLeftColor: '#ffffff',
+      maxWidth: 72, lineHeight: 1.5,
+    },
+  ]
 
-  if (headline) {
+  if (cta) {
     els.push({
-      id: id(), content: headline.content,
+      id: uid(), content: cta.content,
+      x: 10, y: 76,
+      fontSize: 14, fontFamily: 'Poiret One', color: 'rgba(255,255,255,0.55)',
+      rotation: 0, bold: false, italic: false,
+      align: 'left', letterSpacing: 1,
+    })
+  }
+
+  return mkFrame(bg, els, img, img ? 'rgba(0,0,0,0.28)' : undefined)
+}
+
+// ────────────────────────────────────────────────────────────────
+// T7 — ItalicHeading + ArrowList + Footer
+// Ref img 7: "Nosso dia a dia é assim:" italic center + ↓ + list + italic footer
+// When: headline ending ":" + list items + closing phrase
+// ────────────────────────────────────────────────────────────────
+function t7_italicHeadingList(segs: Segment[], _idx: number, img?: string): StoryFrame {
+  const bg = img ? '#000000' : 'linear-gradient(160deg,#0d0d0d,#1a1a1a)'
+
+  const heading = segs.find(s => s.role === 'headline' || s.role === 'sub') ?? segs[0]
+  const items = segs.filter(s => s.role === 'list' || (s !== heading && s.role === 'body'))
+  const footer = segs.find(s => s.role === 'cta')
+
+  const headFontSize = heading.content.length > 20 ? 34 : 42
+
+  const els: TextElement[] = [
+    {
+      id: uid(), content: heading.content,
+      x: 50, y: 32,
+      fontSize: headFontSize, fontFamily: 'Poiret One', color: '#ffffff',
+      rotation: 0, bold: false, italic: true,
+      align: 'center', maxWidth: 80, lineHeight: 1.25,
+    },
+    {
+      id: uid(), content: '↓',
+      x: 60, y: 46,
+      fontSize: 26, fontFamily: 'Poppins', color: 'rgba(255,255,255,0.45)',
+      rotation: 0, bold: false, italic: false, align: 'center',
+    },
+    ...items.slice(0, 4).map((s, i): TextElement => ({
+      id: uid(), content: s.content,
+      x: 16, y: 55 + i * 9,
+      fontSize: 20, fontFamily: 'Poppins', color: 'rgba(255,255,255,0.88)',
+      rotation: 0, bold: false, italic: false,
+      align: 'left', maxWidth: 76, lineHeight: 1.3,
+    })),
+  ]
+
+  if (footer) {
+    els.push({
+      id: uid(), content: footer.content,
+      x: 50, y: 88,
+      fontSize: 17, fontFamily: 'Poiret One', color: 'rgba(255,255,255,0.55)',
+      rotation: 0, bold: false, italic: true,
+      align: 'center', maxWidth: 80,
+    })
+  }
+
+  return mkFrame(bg, els, img, img ? 'rgba(0,0,0,0.60)' : undefined)
+}
+
+// ────────────────────────────────────────────────────────────────
+// T8 — BorderLeft Title + Checklist
+// Ref img 8: | italic title + bold subtitle upper-left + ✅ checklist middle
+// When: title + subtitle + checklist items
+// ────────────────────────────────────────────────────────────────
+function t8_borderLeftChecklist(segs: Segment[], _idx: number, img?: string): StoryFrame {
+  const bg = img ? '#000000' : 'linear-gradient(160deg,#0d0d0d,#1a1a1a)'
+
+  const headline = segs.find(s => s.role === 'headline') ?? segs[0]
+  const sub = segs.find(s => s.role === 'sub')
+  const items = segs.filter(s => s.role === 'list')
+  const cta = segs.find(s => s.role === 'cta')
+
+  const els: TextElement[] = [
+    {
+      id: uid(), content: headline.content,
       x: 10, y: 22,
-      fontSize: 34, fontFamily: 'Paytone One', color: '#ffffff',
+      fontSize: 36, fontFamily: 'Poiret One', color: '#ffffff',
+      rotation: 0, bold: false, italic: true,
+      align: 'left', borderLeft: true, borderLeftColor: '#ffffff',
+      maxWidth: 75,
+    },
+  ]
+
+  if (sub) {
+    els.push({
+      id: uid(), content: sub.content,
+      x: 14, y: 34,
+      fontSize: 24, fontFamily: 'Poppins', color: '#ffffff',
       rotation: 0, bold: true, italic: false,
-      align: 'left', backgroundBox: boxColor,
-      maxWidth: 82, borderLeft: true, borderLeftColor: '#ffffff',
+      align: 'left', maxWidth: 75,
     })
   }
 
   items.slice(0, 5).forEach((s, i) => {
-    const text = s.content.startsWith('→') || s.content.startsWith('-')
-      ? s.content
-      : `→ ${s.content}`
+    const text = /^[✅☑✓✔]/.test(s.content) ? s.content : `✅ ${s.content}`
     els.push({
-      id: id(), content: text,
-      x: 10, y: (headline ? 42 : 30) + i * 11,
-      fontSize: 22, fontFamily: 'Inter', color: '#ffffff',
+      id: uid(), content: text,
+      x: 10, y: 52 + i * 10,
+      fontSize: 22, fontFamily: 'Poppins', color: '#ffffff',
       rotation: 0, bold: false, italic: false,
       align: 'left', maxWidth: 82, lineHeight: 1.3,
     })
@@ -198,231 +441,80 @@ function posterList(segs: Segment[], idx: number, img?: string): StoryFrame {
 
   if (cta) {
     els.push({
-      id: id(), content: cta.content,
-      x: 10, y: 86,
-      fontSize: 19, fontFamily: 'Inter', color: 'rgba(255,255,255,0.7)',
-      rotation: 0, bold: false, italic: false,
-      align: 'left',
+      id: uid(), content: cta.content,
+      x: 50, y: 91,
+      fontSize: 13, fontFamily: 'Poppins', color: 'rgba(255,255,255,0.35)',
+      rotation: 0, bold: false, italic: false, align: 'center',
     })
   }
 
-  return frame(bg, els, img, 'rgba(0,0,0,0.52)')
+  return mkFrame(bg, els, img, img ? 'rgba(0,0,0,0.55)' : undefined)
 }
 
-// ─── DECO PATTERNS ───────────────────────────────────────────────
-// Inspired by: cream/warm tones, elegant serif, left-border, quote boxes
+// ── TEMPLATE SELECTOR ────────────────────────────────────────────
+function selectTemplate(segs: Segment[], style: StoryStyle, idx: number, img?: string): StoryFrame {
+  const listItems  = segs.filter(s => s.role === 'list')
+  const hasChecklist = listItems.some(s => /^[✅☑✓✔]/.test(s.content))
+  const hasArrows   = listItems.some(s => /^→/.test(s.content))
+  const hasAnyList  = listItems.length >= 2
+  const headlines   = segs.filter(s => s.role === 'headline')
+  const hasBody     = segs.some(s => s.role === 'body')
+  const totalWords  = segs.reduce((n, s) => n + s.content.split(' ').length, 0)
+  const firstIsAbbr = segs[0].content.replace(/\s/g, '').length <= 3
+  const headingColon = segs.some(s => /:\s*$/.test(s.content.trim()))
+  const hasSub      = segs.some(s => s.role === 'sub')
+  const hasPhrase   = hasBody || hasSub
+  const oneWordHL   = headlines.some(s => s.content.split(' ').length === 1)
 
-const DECO_BGS = [
-  'linear-gradient(160deg,#f5f0e8 0%,#e8dcc8 100%)',
-  'linear-gradient(160deg,#1a1a1a 0%,#2d2d2d 100%)',
-  'linear-gradient(160deg,#f0ebe3 0%,#d4c5b0 100%)',
-  'linear-gradient(160deg,#0d0d0d 0%,#1a1209 100%)',
-  'linear-gradient(160deg,#ede8e0 0%,#c9b99a 100%)',
-]
+  // T2: giant letter/abbr + word column (eg "RE" + list of verbs)
+  if (firstIsAbbr && segs.length >= 3)
+    return t2_giantLetterList(segs, idx, img)
 
-const DECO_DARK = [false, true, false, true, false]
+  // T8: border-left title + ✅ checklist
+  if (hasChecklist && segs.length >= 2)
+    return t8_borderLeftChecklist(segs, idx, img)
 
-/** Pattern: left-border + italic title + bold sub + body (image 6, 8) */
-function decoLeftBlock(segs: Segment[], idx: number, img?: string): StoryFrame {
-  const dark = DECO_DARK[idx % DECO_DARK.length] || !!img
-  const bg = DECO_BGS[idx % DECO_BGS.length]
-  const baseColor = dark ? '#f5f0e8' : '#1a1209'
-  const accentColor = dark ? '#d4af37' : '#7a5c2e'
+  // T7: italic heading ending ":" + list + footer
+  if (headingColon && hasAnyList)
+    return t7_italicHeadingList(segs, idx, img)
 
-  const headline = segs.find(s => s.role === 'headline')
-  const sub = segs.find(s => s.role === 'sub')
-  const body = segs.filter(s => s.role === 'body' || s.role === 'list')
-  const cta = segs.find(s => s.role === 'cta')
+  // T5: box headline + → arrow list box
+  if ((hasArrows || hasAnyList) && hasPhrase)
+    return t5_boxHeadlineArrowList(segs, idx, img)
 
-  const els: TextElement[] = []
+  if (hasAnyList && segs.length >= 3)
+    return t5_boxHeadlineArrowList(segs, idx, img)
 
-  if (headline) {
-    els.push({
-      id: id(), content: headline.content,
-      x: 10, y: sub ? 22 : 30,
-      fontSize: 44, fontFamily: 'Poiret One', color: baseColor,
-      rotation: 0, bold: false, italic: true,
-      align: 'left', borderLeft: true, borderLeftColor: accentColor,
-      maxWidth: 80,
-    })
-  }
+  // T1: colored box phrase top + HUGE word below
+  if (oneWordHL && hasPhrase)
+    return t1_boxTopBigWord(segs, idx, img)
 
-  if (sub) {
-    els.push({
-      id: id(), content: sub.content,
-      x: 10, y: headline ? 38 : 28,
-      fontSize: 26, fontFamily: 'Poppins', color: baseColor,
-      rotation: 0, bold: true, italic: false,
-      align: 'left', maxWidth: 80,
-    })
-  }
+  // T4: photo + big word bottom + line + subtitle
+  if (oneWordHL && segs.length >= 2)
+    return t4_bottomTitleLine(segs, idx, img)
 
-  body.slice(0, 4).forEach((s, i) => {
-    const text = s.role === 'list'
-      ? (s.content.startsWith('→') ? s.content : `→ ${s.content}`)
-      : s.content
-    els.push({
-      id: id(), content: text,
-      x: 10, y: (headline || sub ? 52 : 40) + i * 10,
-      fontSize: 20, fontFamily: 'Inter', color: baseColor,
-      rotation: 0, bold: false, italic: false,
-      align: 'left', maxWidth: 80, opacity: 0.85,
-    })
-  })
+  // T6: single long paragraph/quote in card
+  if (hasBody && !hasAnyList && totalWords > 10)
+    return t6_cardQuoteLeft(segs, idx, img)
 
-  if (cta) {
-    els.push({
-      id: id(), content: cta.content,
-      x: 10, y: 86,
-      fontSize: 16, fontFamily: 'Poiret One', color: accentColor,
-      rotation: 0, bold: false, italic: false,
-      align: 'left', letterSpacing: 1,
-    })
-  }
+  // T3: single sentence with inline highlight
+  if (totalWords <= 14 && segs.length <= 2)
+    return t3_inlineHighlight(segs, idx, img)
 
-  return frame(bg, els, img, 'rgba(0,0,0,0.30)')
+  // Fallback by style
+  if (style === 'poster') return t1_boxTopBigWord(segs, idx, img)
+  return t6_cardQuoteLeft(segs, idx, img)
 }
 
-/** Pattern: center quote — large italic + underline + body (image 6, 7) */
-function decoCenterQuote(segs: Segment[], idx: number, img?: string): StoryFrame {
-  const dark = DECO_DARK[idx % DECO_DARK.length] || !!img
-  const bg = DECO_BGS[idx % DECO_BGS.length]
-  const baseColor = dark ? '#f5f0e8' : '#1a1209'
-  const accentColor = dark ? '#d4af37' : '#7a5c2e'
-  const boxColor = dark ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.55)'
-
-  const headline = segs.find(s => s.role === 'headline')
-  const sub = segs.find(s => s.role === 'sub')
-  const body = segs.filter(s => s.role === 'body')
-  const cta = segs.find(s => s.role === 'cta')
-
-  const els: TextElement[] = []
-
-  const mainSeg = headline ?? sub ?? segs[0]
-  els.push({
-    id: id(), content: mainSeg.content,
-    x: 50, y: body.length ? 35 : 42,
-    fontSize: mainSeg.content.length > 16 ? 40 : 52,
-    fontFamily: 'Poiret One', color: baseColor,
-    rotation: 0, bold: false, italic: true,
-    align: 'center',
-    decorLine: true, decorLineColor: accentColor,
-    maxWidth: 82, lineHeight: 1.25,
-    backgroundBox: img ? boxColor : undefined,
-  })
-
-  if (sub && sub !== mainSeg) {
-    els.push({
-      id: id(), content: sub.content,
-      x: 50, y: 56,
-      fontSize: 24, fontFamily: 'Poppins', color: baseColor,
-      rotation: 0, bold: true, italic: false,
-      align: 'center', maxWidth: 78, opacity: 0.9,
-    })
-  }
-
-  body.forEach((s, i) => {
-    els.push({
-      id: id(), content: s.content,
-      x: 50, y: 64 + i * 10,
-      fontSize: 19, fontFamily: 'Inter', color: baseColor,
-      rotation: 0, bold: false, italic: true,
-      align: 'center', maxWidth: 76, opacity: 0.78,
-    })
-  })
-
-  if (cta) {
-    els.push({
-      id: id(), content: cta.content,
-      x: 50, y: 86,
-      fontSize: 16, fontFamily: 'Poiret One', color: accentColor,
-      rotation: 0, bold: false, italic: false,
-      align: 'center', letterSpacing: 2,
-    })
-  }
-
-  return frame(bg, els, img, 'rgba(0,0,0,0.35)')
-}
-
-/** Pattern: minimal — single large word center + ornament (luxury deco) */
-function decoMinimal(segs: Segment[], idx: number, img?: string): StoryFrame {
-  const dark = DECO_DARK[idx % DECO_DARK.length] || !!img
-  const bg = DECO_BGS[idx % DECO_BGS.length]
-  const baseColor = dark ? '#f5f0e8' : '#1a1209'
-  const accentColor = dark ? '#d4af37' : '#7a5c2e'
-
-  const main = segs[0]
-  const sub = segs[1]
-
-  const els: TextElement[] = [
-    {
-      id: id(), content: '✦',
-      x: 50, y: 32,
-      fontSize: 18, fontFamily: 'Poiret One', color: accentColor,
-      rotation: 0, bold: false, italic: false,
-      align: 'center', letterSpacing: 8,
-    },
-    {
-      id: id(), content: main.content,
-      x: 50, y: 48,
-      fontSize: main.content.length > 14 ? 48 : 62,
-      fontFamily: 'Poiret One', color: baseColor,
-      rotation: 0, bold: false, italic: false,
-      align: 'center',
-      decorLine: true, decorLineColor: accentColor,
-      letterSpacing: 4, maxWidth: 84,
-    },
-  ]
-
-  if (sub) {
-    els.push({
-      id: id(), content: sub.content,
-      x: 50, y: 66,
-      fontSize: 20, fontFamily: 'Poiret One', color: baseColor,
-      rotation: 0, bold: false, italic: true,
-      align: 'center', opacity: 0.75, maxWidth: 72,
-    })
-  }
-
-  els.push({
-    id: id(), content: '✦',
-    x: 50, y: 80,
-    fontSize: 18, fontFamily: 'Poiret One', color: accentColor,
-    rotation: 0, bold: false, italic: false,
-    align: 'center', letterSpacing: 8,
-  })
-
-  return frame(bg, els, img, 'rgba(0,0,0,0.28)')
-}
-
-// ─── PATTERN SELECTOR ─────────────────────────────────────────────
-
-function selectPattern(segs: Segment[], style: StoryStyle, idx: number, img?: string): StoryFrame {
-  const hasList = segs.some(s => s.role === 'list')
-  const total = segs.reduce((n, s) => n + s.content.split(' ').length, 0)
-  const hasHeadline = segs.some(s => s.role === 'headline')
-
-  if (style === 'poster') {
-    if (hasList)                   return posterList(segs, idx, img)
-    if (total <= 12 && hasHeadline) return posterImpact(segs, idx, img)
-    return posterBottom(segs, idx, img)
-  } else {
-    if (segs.length === 1 || total <= 8) return decoMinimal(segs, idx, img)
-    if (hasList || segs.some(s => s.role === 'body')) return decoLeftBlock(segs, idx, img)
-    return decoCenterQuote(segs, idx, img)
-  }
-}
-
-// ─── MAIN EXPORT ──────────────────────────────────────────────────
-
+// ── MAIN EXPORT ──────────────────────────────────────────────────
 export function generateStoryFrames(
   text: string,
   style: StoryStyle,
   imageUrl?: string
 ): StoryFrame[] {
-  const segs = parseSegments(text)
-  const groups = groupIntoSlides(segs)
-  return groups.map((group, i) =>
-    selectPattern(group, style, i, i === 0 ? imageUrl : undefined)
-  )
+  const blocks = splitStoryBlocks(text)
+  return blocks.map((block, i) => {
+    const segs = parseSegments(block)
+    return selectTemplate(segs, style, i, i === 0 ? imageUrl : undefined)
+  })
 }
