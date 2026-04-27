@@ -189,7 +189,7 @@ export function EditorPage() {
     }
     addStory(story)
     resetEditor()
-    setCurrentPage('home')
+    setCurrentPage('generator')
   }
 
   return (

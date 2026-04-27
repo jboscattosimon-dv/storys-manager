@@ -39,10 +39,15 @@ interface AppStore {
   resetEditor: () => void
   undoEditor: () => void
   redoEditor: () => void
+
+  generatedFrames: StoryFrame[]
+  activeGeneratedIndex: number
+  setGeneratedFrames: (frames: StoryFrame[]) => void
+  setActiveGeneratedIndex: (i: number) => void
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
-  currentPage: 'home',
+  currentPage: 'generator',
   setCurrentPage: (page) => set({ currentPage: page }),
 
   stories: mockStories,
@@ -146,5 +151,30 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (editorHistoryIndex >= editorHistory.length - 1) return
     const idx = editorHistoryIndex + 1
     set({ editorFrame: editorHistory[idx], editorHistoryIndex: idx })
+  },
+
+  generatedFrames: [],
+  activeGeneratedIndex: 0,
+  setGeneratedFrames: (frames) => {
+    const first = frames[0]
+    set({
+      generatedFrames: frames,
+      activeGeneratedIndex: 0,
+      editorFrame: first ?? defaultFrame(),
+      editorHistory: first ? [first] : [],
+      editorHistoryIndex: first ? 0 : -1,
+    })
+  },
+  setActiveGeneratedIndex: (i) => {
+    const { generatedFrames } = get()
+    const frame = generatedFrames[i]
+    if (!frame) return
+    set({
+      activeGeneratedIndex: i,
+      editorFrame: frame,
+      editorHistory: [frame],
+      editorHistoryIndex: 0,
+      selectedElementId: null,
+    })
   },
 }))

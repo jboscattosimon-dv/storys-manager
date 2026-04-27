@@ -28,7 +28,7 @@ export function HistoryPage() {
               <p className="text-sm mt-1" style={{ color: '#6b7280' }}>Crie seu primeiro story no editor</p>
             </div>
             <button
-              onClick={() => setCurrentPage('editor')}
+              onClick={() => setCurrentPage('generator')}
               className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90"
               style={{ background: 'linear-gradient(135deg, #7c3aed, #a855f7)' }}>
               Criar story

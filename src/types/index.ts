@@ -65,4 +65,4 @@ export interface EditorState {
   historyIndex: number
 }
 
-export type AppPage = 'home' | 'editor' | 'templates' | 'history'
+export type AppPage = 'generator' | 'editor' | 'history'
