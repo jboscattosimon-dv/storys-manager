@@ -3,10 +3,13 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Sparkles, ImageIcon, X, Download, Edit3,
   RotateCcw, Trash2, ChevronDown, ChevronUp, ZoomIn,
-  Save, FolderOpen, Shuffle,
+  Save, FolderOpen, Shuffle, ExternalLink, Loader2,
 } from 'lucide-react'
 import { generateStoryFrames, type StoryStyle } from '../hooks/useAutoLayout'
 import { useAppStore } from '../store/useAppStore'
+import {
+  canvaConfigured, getCanvaToken, startCanvaOAuth, saveFramesToCanva,
+} from '../services/canva'
 import type { StoryFrame, TextElement } from '../types'
 
 /* ─── SAVED PROJECT TYPE ─────────────────────────────────────── */
@@ -391,6 +394,9 @@ export function GeneratorPage() {
   const [zoomIndex, setZoomIndex] = useState<number | null>(null)
   const [projects, setProjects] = useState<SavedProject[]>(loadProjects)
   const [saveToast, setSaveToast] = useState(false)
+  const [canvaStatus, setCanvaStatus] = useState<'idle' | 'saving' | 'done' | 'error'>('idle')
+  const [canvaMsg, setCanvaMsg] = useState('')
+  const [canvaLinks, setCanvaLinks] = useState<string[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { saveProjects(projects) }, [projects])
@@ -450,6 +456,41 @@ export function GeneratorPage() {
     setGeneratedFrames(frames)
     useAppStore.getState().setActiveGeneratedIndex(index)
     setCurrentPage('editor')
+  }
+
+  const handleSaveToCanva = async () => {
+    if (frames.length === 0) return
+    const projectName = text.trim().split('\n')[0].slice(0, 40) || 'Story'
+
+    if (!canvaConfigured) {
+      setCanvaMsg('Configure VITE_CANVA_CLIENT_ID nas variáveis de ambiente.')
+      setCanvaStatus('error')
+      return
+    }
+
+    if (!getCanvaToken()) {
+      await startCanvaOAuth()
+      return
+    }
+
+    setCanvaStatus('saving')
+    setCanvaMsg('Iniciando envio...')
+    setCanvaLinks([])
+
+    try {
+      const urls = await saveFramesToCanva(frames, projectName, msg => setCanvaMsg(msg))
+      setCanvaLinks(urls)
+      setCanvaStatus('done')
+      setCanvaMsg(`${urls.length} design${urls.length > 1 ? 's' : ''} salvo${urls.length > 1 ? 's' : ''} no Canva!`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro desconhecido'
+      if (msg === 'NOT_AUTHENTICATED') {
+        await startCanvaOAuth()
+      } else {
+        setCanvaStatus('error')
+        setCanvaMsg(msg)
+      }
+    }
   }
 
   const deleteFrame = (id: string) => setFrames(prev => prev.filter(f => f.id !== id))
@@ -603,8 +644,48 @@ export function GeneratorPage() {
                   style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)' }}>
                   <Download size={12} /> Baixar todos
                 </button>
+                {/* Canva */}
+                <button
+                  onClick={handleSaveToCanva}
+                  disabled={canvaStatus === 'saving'}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-opacity hover:opacity-80 disabled:opacity-50"
+                  style={{ background: 'linear-gradient(135deg,#00c4cc,#7209b7)' }}
+                  title="Salvar no Canva">
+                  {canvaStatus === 'saving'
+                    ? <Loader2 size={12} className="animate-spin" />
+                    : <ExternalLink size={12} />}
+                  Canva
+                </button>
               </div>
             </div>
+
+            {/* Canva status bar */}
+            <AnimatePresence>
+              {canvaStatus !== 'idle' && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                  className="px-6 py-2 text-xs flex items-center justify-between flex-shrink-0"
+                  style={{
+                    backgroundColor: canvaStatus === 'done' ? 'rgba(0,196,204,0.1)' : canvaStatus === 'error' ? 'rgba(239,68,68,0.1)' : 'rgba(255,255,255,0.05)',
+                    borderBottom: '1px solid var(--color-border)',
+                  }}>
+                  <span style={{ color: canvaStatus === 'done' ? '#00c4cc' : canvaStatus === 'error' ? '#f87171' : '#9ca3af' }}>
+                    {canvaMsg}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {canvaLinks.map((url, i) => (
+                      <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-white"
+                        style={{ background: 'linear-gradient(135deg,#00c4cc,#7209b7)' }}>
+                        <ExternalLink size={10} /> Abrir design {canvaLinks.length > 1 ? i + 1 : ''}
+                      </a>
+                    ))}
+                    <button onClick={() => { setCanvaStatus('idle'); setCanvaLinks([]) }}
+                      className="text-gray-500 hover:text-white transition-colors"><X size={12} /></button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Cards */}
             <div className="flex-1 overflow-auto p-6">

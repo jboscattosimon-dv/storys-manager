@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AppLayout } from './components/layout/AppLayout'
 import { StoryViewer } from './components/story/StoryViewer'
@@ -5,6 +6,7 @@ import { GeneratorPage } from './pages/GeneratorPage'
 import { EditorPage } from './pages/EditorPage'
 import { HistoryPage } from './pages/HistoryPage'
 import { useAppStore } from './store/useAppStore'
+import { exchangeCanvaCode } from './services/canva'
 
 const pageVariants = {
   initial: { opacity: 0, x: 10 },
@@ -34,6 +36,19 @@ function PageContent() {
 }
 
 export default function App() {
+  // Handle Canva OAuth callback — Canva redirects back to the app root with ?code=
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const code  = params.get('code')
+    const state = params.get('state')
+
+    if (code && state === 'canva_save') {
+      // Remove the code from the URL immediately
+      window.history.replaceState({}, '', window.location.pathname)
+      exchangeCanvaCode(code).catch(console.error)
+    }
+  }, [])
+
   return (
     <AppLayout>
       <PageContent />
