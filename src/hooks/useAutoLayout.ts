@@ -451,70 +451,55 @@ function t8_borderLeftChecklist(segs: Segment[], _idx: number, img?: string): St
   return mkFrame(bg, els, img, img ? 'rgba(0,0,0,0.55)' : undefined)
 }
 
-// ── TEMPLATE SELECTOR ────────────────────────────────────────────
-function selectTemplate(segs: Segment[], style: StoryStyle, idx: number, img?: string): StoryFrame {
-  const listItems  = segs.filter(s => s.role === 'list')
+// ── TEMPLATE RANKER ──────────────────────────────────────────────
+// Scores all 8 templates for a given set of segments and returns them
+// sorted by suitability. rotation picks which rank to use, so each
+// Regenerar click cycles to the next valid alternative layout.
+type TemplateFn = (segs: Segment[], idx: number, img?: string) => StoryFrame
+
+function rankTemplates(segs: Segment[], _style: StoryStyle, img?: string): TemplateFn[] {
+  const listItems    = segs.filter(s => s.role === 'list')
   const hasChecklist = listItems.some(s => /^[✅☑✓✔]/.test(s.content))
-  const hasArrows   = listItems.some(s => /^→/.test(s.content))
-  const hasAnyList  = listItems.length >= 2
-  const headlines   = segs.filter(s => s.role === 'headline')
-  const hasBody     = segs.some(s => s.role === 'body')
-  const totalWords  = segs.reduce((n, s) => n + s.content.split(' ').length, 0)
-  const firstIsAbbr = segs[0].content.replace(/\s/g, '').length <= 3
+  const hasArrows    = listItems.some(s => /^→/.test(s.content))
+  const hasAnyList   = listItems.length >= 2
+  const headlines    = segs.filter(s => s.role === 'headline')
+  const hasBody      = segs.some(s => s.role === 'body')
+  const totalWords   = segs.reduce((n, s) => n + s.content.split(' ').length, 0)
+  const firstIsAbbr  = segs[0].content.replace(/\s/g, '').length <= 3
   const headingColon = segs.some(s => /:\s*$/.test(s.content.trim()))
-  const hasSub      = segs.some(s => s.role === 'sub')
-  const hasPhrase   = hasBody || hasSub
-  const oneWordHL   = headlines.some(s => s.content.split(' ').length === 1)
+  const hasSub       = segs.some(s => s.role === 'sub')
+  const hasPhrase    = hasBody || hasSub
+  const oneWordHL    = headlines.some(s => s.content.split(' ').length === 1)
 
-  // T2: giant letter/abbr + word column (eg "RE" + list of verbs)
-  if (firstIsAbbr && segs.length >= 3)
-    return t2_giantLetterList(segs, idx, img)
+  const scores: Array<{ fn: TemplateFn; score: number }> = [
+    { fn: t1_boxTopBigWord,        score: (oneWordHL && hasPhrase ? 10 : 0) + (img ? 2 : 0) },
+    { fn: t2_giantLetterList,      score: firstIsAbbr && segs.length >= 3 ? 10 : 0 },
+    { fn: t3_inlineHighlight,      score: totalWords <= 14 && segs.length <= 2 ? 8 : 1 },
+    { fn: t4_bottomTitleLine,      score: (oneWordHL && !hasPhrase ? 9 : oneWordHL ? 4 : 1) + (img ? 3 : 0) },
+    { fn: t5_boxHeadlineArrowList, score: (hasArrows || hasAnyList) && hasPhrase ? 10 : hasAnyList ? 7 : 1 },
+    { fn: t6_cardQuoteLeft,        score: hasBody && !hasAnyList && totalWords > 10 ? 9 : 2 },
+    { fn: t7_italicHeadingList,    score: headingColon && hasAnyList ? 10 : hasSub ? 3 : 1 },
+    { fn: t8_borderLeftChecklist,  score: hasChecklist ? 10 : hasSub && hasAnyList ? 5 : 1 },
+  ]
 
-  // T8: border-left title + ✅ checklist
-  if (hasChecklist && segs.length >= 2)
-    return t8_borderLeftChecklist(segs, idx, img)
-
-  // T7: italic heading ending ":" + list + footer
-  if (headingColon && hasAnyList)
-    return t7_italicHeadingList(segs, idx, img)
-
-  // T5: box headline + → arrow list box
-  if ((hasArrows || hasAnyList) && hasPhrase)
-    return t5_boxHeadlineArrowList(segs, idx, img)
-
-  if (hasAnyList && segs.length >= 3)
-    return t5_boxHeadlineArrowList(segs, idx, img)
-
-  // T1: colored box phrase top + HUGE word below
-  if (oneWordHL && hasPhrase)
-    return t1_boxTopBigWord(segs, idx, img)
-
-  // T4: photo + big word bottom + line + subtitle
-  if (oneWordHL && segs.length >= 2)
-    return t4_bottomTitleLine(segs, idx, img)
-
-  // T6: single long paragraph/quote in card
-  if (hasBody && !hasAnyList && totalWords > 10)
-    return t6_cardQuoteLeft(segs, idx, img)
-
-  // T3: single sentence with inline highlight
-  if (totalWords <= 14 && segs.length <= 2)
-    return t3_inlineHighlight(segs, idx, img)
-
-  // Fallback by style
-  if (style === 'poster') return t1_boxTopBigWord(segs, idx, img)
-  return t6_cardQuoteLeft(segs, idx, img)
+  return scores
+    .sort((a, b) => b.score - a.score)
+    .map(s => s.fn)
 }
 
 // ── MAIN EXPORT ──────────────────────────────────────────────────
 export function generateStoryFrames(
   text: string,
   style: StoryStyle,
-  imageUrl?: string
+  imageUrl?: string,
+  rotation = 0
 ): StoryFrame[] {
   const blocks = splitStoryBlocks(text)
   return blocks.map((block, i) => {
-    const segs = parseSegments(block)
-    return selectTemplate(segs, style, i, i === 0 ? imageUrl : undefined)
+    const segs    = parseSegments(block)
+    const img     = i === 0 ? imageUrl : undefined
+    const ranked  = rankTemplates(segs, style, img)
+    const pick    = ranked[rotation % ranked.length]
+    return pick(segs, i, img)
   })
 }
